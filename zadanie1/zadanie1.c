@@ -8,21 +8,40 @@ bool decrypt = false;
 char* password = NULL;
 char *input_file = NULL;
 char *output_file = NULL;
+FILE *file_in = NULL;
+FILE *file_out = NULL;
 
 void validate_arguments();
 void parse_arguments(int argc, char* argv[]);
 char* get_value(int argc, char* argv[], int* i);
+void open_files();
+void process_file();
 
 
 int main(int argc, char* argv[]){
-    printf("Entered: %d", argc);
     parse_arguments(argc, argv);
     validate_arguments();
+    open_files();
+    process_file();
     
+    fclose(file_in);
+    fclose(file_out);
 
     return 0;
 }
 
+
+void process_file(){
+    int c;
+    int i = 0;
+    int passwd_len = strlen(password);
+
+    while ((c = fgetc(file_in)) != EOF){
+        int byte = c ^ (unsigned char)password[i % passwd_len];
+        fputc(byte, file_out);
+        i++;
+    }
+}
 
 char* get_value(int argc, char* argv[], int* i){
     (*i)++;
@@ -42,6 +61,22 @@ char* get_value(int argc, char* argv[], int* i){
     }    
 
     return argv[*i];
+}
+
+// otvorenie suborov
+void open_files(){
+    file_in = fopen(input_file, "rb");
+    if (file_in == NULL) {
+        printf("chyba\n");
+        exit(1);
+    }
+
+    file_out = fopen(output_file, "wb");
+    if (file_out == NULL) {
+        fclose(file_in);
+        printf("chyba\n");
+        exit(1);
+    }
 }
 
 void validate_arguments(){
