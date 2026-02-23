@@ -1,0 +1,5 @@
+admin:heslo123
+mirec:tajomstvo
+student:fei2026
+ferko:auto123
+anna:kvetinka
