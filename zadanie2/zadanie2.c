@@ -16,6 +16,8 @@ void hash_password(char* plain, char* out_hex, char* key_str);
 void open_file();
 void trim(char *s);
 bool check_keys(char* secret_keys, bool* line_changed, char* new_keys);
+void clean_up();
+void swap_files(bool success);
 
 
 int main(){
@@ -36,10 +38,14 @@ int main(){
     validate_user();
 
     if (users) fclose(users);
-    free(name);
-    free(password);
-    free(key);
+    clean_up();
     return 0;
+}
+
+void clean_up(){
+    if (name) free(name);
+    if (password) free(password);
+    if (key) free(key);
 }
 
 void trim(char *s) {
@@ -72,9 +78,24 @@ void hash_password(char* plain, char* out_hex, char* key_str) {
     int key_len = strlen(key_str);
     int plain_len = strlen(plain);
     for (int i = 0; i < plain_len; i++) {
+        // jednoduchy XOR hash konvertovany do HEX
         sprintf(out_hex + (i * 2), "%02x", (unsigned char)plain[i] ^ (unsigned char)key_str[i % key_len]);
     }
     out_hex[plain_len * 2] = '\0';
+}
+
+void swap_files(bool success){
+    if (success) {
+        remove("hesla.csv");             
+        if (rename("temp.csv", "hesla.csv") == 0) {
+            printf("ok\n");
+        } else {
+            printf("chyba\n");
+        }
+    } else {
+        remove("temp.csv");         
+        printf("chyba\n");
+    }
 }
 
 void validate_user(){
@@ -87,7 +108,13 @@ void validate_user(){
 
     hash_password(password, input_password_hash, HASH_KEY);
     FILE *temp_file = fopen("temp.csv", "w"); // pomocny subor
-    if (!temp_file) return;
+    if (!temp_file) {
+        printf("chyba\n");
+        if (users) fclose(users);
+        clean_up();
+        users = NULL;
+        exit(0);
+    }
 
     while (fgets(row, MAX_LINE, users) != NULL){
         char original_row[MAX_LINE];
@@ -99,11 +126,13 @@ void validate_user(){
         bool line_changed = false;
         char new_keys[MAX_LINE] = "";
 
+        // rozdelenie: MENO : HASH : KLUCE
         user_name = strtok(row_for_tokens, ":");
         password_hash = strtok(NULL, ":");
         secret_keys = strtok(NULL, ":");
 
         if (user_name && password_hash && secret_keys) {            
+            // overenie mena a hashu hesla
             if (strcmp(password_hash, input_password_hash) == 0 && strcmp(user_name, name) == 0) {
                 if (check_keys(secret_keys, &line_changed, new_keys)){
                     success = true;
@@ -123,22 +152,12 @@ void validate_user(){
         }
     }
 
-    fclose(users);
+    if (users) fclose(users);
+    if (temp_file) fclose(temp_file);
     users = NULL;
-    fclose(temp_file);
 
     // vymena suborov
-    if (success) {
-        remove("hesla.csv");             
-        if (rename("temp.csv", "hesla.csv") == 0) {
-            printf("ok\n");
-        } else {
-            printf("chyba\n");
-        }
-    } else {
-        remove("temp.csv");         
-        printf("chyba\n");
-    }
+    swap_files(success);
 }
 
 void open_file(){
@@ -146,28 +165,21 @@ void open_file(){
 
     if (users == NULL) {
         printf("chyba\n");
+        clean_up();
         exit(0);
     }
     
 }
 
 void declare_memory(){
-    name = malloc(100 * sizeof(char));
-    if (name == NULL){
+    name = (char*)malloc(100 * sizeof(char));
+    password = (char*)malloc(100 * sizeof(char));
+    key = (char*)malloc(100 * sizeof(char)); 
+    
+    if (name == NULL || password == NULL || key == NULL) {
         printf("chyba\n");
+        clean_up();
         exit(0);
-    } 
-
-    password = malloc(100 * sizeof(char));
-    if (password == NULL) {
-        printf("chyba\n");
-        exit(0);
-    } 
-
-    key = malloc(100 * sizeof(char));
-    if (key == NULL) {
-        printf("chyba\n");
-        exit(0);
-    } 
+    }
 }
 
