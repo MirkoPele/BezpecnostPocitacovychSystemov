@@ -65,6 +65,11 @@ char* get_value(int argc, char* argv[], int* i){
 
 // otvorenie suborov
 void open_files(){
+    if (strcmp(input_file, output_file)==0) {
+        printf("chyba\n");
+        exit(1);
+    }
+    
     file_in = fopen(input_file, "rb");
     if (file_in == NULL) {
         printf("chyba\n");
@@ -74,13 +79,6 @@ void open_files(){
     file_out = fopen(output_file, "wb");
     if (file_out == NULL) {
         fclose(file_in);
-        printf("chyba\n");
-        exit(1);
-    }
-
-    if (strcmp(input_file, output_file)==0) {
-        fclose(file_in);
-        fclose(file_out);
         printf("chyba\n");
         exit(1);
     }
