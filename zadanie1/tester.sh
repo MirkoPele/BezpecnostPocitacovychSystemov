@@ -127,3 +127,18 @@ run_test "-s -p h -i in -o out -i in" 1
 
 # Skúška na argumenty, ktoré nie sú prepínače (nemajú pomlčku) na konci
 run_test "-s -p heslo -i in -o out extra_argument" 1
+
+run_test "-s -p -i vstup.txt -o vystup.txt" 1 
+
+# Používateľ zabudol zadať vstupný súbor, program nesmie zobrať '-o' ako názov súboru
+run_test "-s -p heslo -i -o vystup.txt" 1 
+
+# Používateľ zabudol zadať výstupný súbor, program nesmie zobrať '-p' ako názov súboru
+run_test "-s -i vstup.txt -o -p heslo" 1 
+
+# Hodnota parametra je prázdna (dve úvodzovky), get_value by mal vrátiť chybu
+run_test "-s -p '' -i vstup.txt -o vystup.txt" 1
+
+# Simulácia útoku/chyby: Názov súboru vyzerá ako prepínač (napr. "-subor.txt")
+# Tvoj program to aktuálne hodí ako chybu, čo je správne správanie pre toto zadanie
+run_test "-s -p heslo -i -subor.txt -o vystup.txt" 1

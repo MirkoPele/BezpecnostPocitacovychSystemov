@@ -77,6 +77,13 @@ void open_files(){
         printf("chyba\n");
         exit(1);
     }
+
+    if (strcmp(input_file, output_file)==0) {
+        fclose(file_in);
+        fclose(file_out);
+        printf("chyba\n");
+        exit(1);
+    }
 }
 
 void validate_arguments(){
