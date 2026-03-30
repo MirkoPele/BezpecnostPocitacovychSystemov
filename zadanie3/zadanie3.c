@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdbool.h>
 
 #define MAX_LINE_LENGTH 2048
 #define DEFAULT_OWNER "balaz"
@@ -22,10 +23,105 @@ typedef struct Node {
     struct Node *next;
 } Node;
 
-/* vytvori kopiu retazca v dynamickej pamati */
-static char *duplicate_string(const char *text) {
-    size_t length;
+Node *root_directory = NULL;
+Node *current_directory = NULL;
+
+char *copy_text(const char *text);
+void memory_error();
+void print_error();
+
+Node *create_node(const char *name, NodeType type, const char *owner, int permissions);
+void init_system();
+void clean_up();
+void free_tree(Node *node);
+
+bool has_read_permission(Node *node);
+bool has_write_permission(Node *node);
+bool has_execute_permission(Node *node);
+bool is_file(Node *node);
+bool is_directory(Node *node);
+
+void permissions_to_text(int permissions, char text[4]);
+void print_node_info(Node *node);
+void print_directory_listing(Node *directory);
+
+bool is_valid_name(const char *name);
+Node *find_child(Node *directory, const char *name);
+void add_child(Node *parent, Node *child);
+void detach_child(Node *child);
+Node *get_root(Node *node);
+
+char *skip_spaces(char *text);
+void trim_line(char *text);
+char *read_token(char **cursor);
+bool has_extra_arguments(char *cursor);
+bool parse_no_arguments(char *cursor);
+bool parse_one_argument(char *cursor, char **arg);
+bool parse_optional_argument(char *cursor, char **arg);
+bool parse_two_arguments(char *cursor, char **first, char **second);
+bool parse_zapis_arguments(char *cursor, char **path, char **content);
+
+bool is_permission_text(const char *text);
+int permission_value(const char *text);
+void remove_last_slashes(char *path);
+
+Node *resolve_path_from(Node *start, const char *path);
+Node *resolve_path(const char *path);
+Node *resolve_parent_directory(const char *path, char **name_part);
+Node *get_create_parent(const char *path, char **name_part);
+
+void swap_args(char **first, char **second);
+
+void replace_content(Node *node, const char *new_content);
+void change_owner(Node *node, const char *owner);
+
+void command_ls(char *arg);
+void command_touch(char *path);
+void command_mkdir(char *path);
+void command_rm(char *path);
+void command_vypis(char *path);
+void command_spusti(char *path);
+void command_cd(char *path);
+void command_zapis(char *path, char *content);
+void command_chmod(char *first, char *second);
+void command_chown(char *first, char *second);
+
+bool execute_simple_command(char *command, char *cursor);
+bool process_command(char *line);
+
+int main(void){
+    char line[MAX_LINE_LENGTH];
+
+    init_system();
+
+    while (fgets(line, sizeof(line), stdin) != NULL){
+        if (!process_command(line)) {
+            break;
+        }
+    }
+
+    clean_up();
+    return 0;
+}
+
+
+void init_system(){
+    root_directory = create_node("/", NODE_DIRECTORY, DEFAULT_OWNER, 7);
+    current_directory = root_directory;
+}
+
+void clean_up(){
+    free_tree(root_directory);
+    root_directory = NULL;
+    current_directory = NULL;
+}
+
+void memory_error(){ fprintf(stderr, "chyba pamate\n"); exit(EXIT_FAILURE); }
+void print_error(){ printf("chyba\n"); }
+
+char *copy_text(const char *text){
     char *copy;
+    size_t length;
 
     if (text == NULL) {
         return NULL;
@@ -33,27 +129,19 @@ static char *duplicate_string(const char *text) {
 
     length = strlen(text);
     copy = (char *)malloc(length + 1);
-    if (copy == NULL) {
-        fprintf(stderr, "chyba pamate\n");
-        exit(EXIT_FAILURE);
-    }
-
+    if (copy == NULL) memory_error();
     memcpy(copy, text, length + 1);
     return copy;
 }
 
-/* vytvori novy subor alebo adresar s nastavenymi udajmi */
-static Node *create_node(const char *name, NodeType type, const char *owner, int permissions) {
+Node *create_node(const char *name, NodeType type, const char *owner, int permissions){
     Node *node = (Node *)malloc(sizeof(Node));
 
-    if (node == NULL) {
-        fprintf(stderr, "chyba pamate\n");
-        exit(EXIT_FAILURE);
-    }
+    if (node == NULL) memory_error();
 
-    node->name = duplicate_string(name);
-    node->owner = duplicate_string(owner);
-    node->content = duplicate_string("");
+    node->name = copy_text(name);
+    node->owner = copy_text(owner);
+    node->content = copy_text("");
     node->permissions = permissions;
     node->type = type;
     node->parent = NULL;
@@ -63,8 +151,7 @@ static Node *create_node(const char *name, NodeType type, const char *owner, int
     return node;
 }
 
-/* uvolni uzol aj cely jeho podstrom */
-static void free_node(Node *node) {
+void free_tree(Node *node){
     Node *child;
     Node *next_child;
 
@@ -75,7 +162,7 @@ static void free_node(Node *node) {
     child = node->children;
     while (child != NULL) {
         next_child = child->next;
-        free_node(child);
+        free_tree(child);
         child = next_child;
     }
 
@@ -85,46 +172,60 @@ static void free_node(Node *node) {
     free(node);
 }
 
-/* zisti, ci ma uzol pravo na citanie */
-static int has_read_permission(const Node *node) {
-    return (node->permissions & 4) != 0;
-}
+bool has_read_permission(Node *node){ return node != NULL && (node->permissions & 4) != 0; }
+bool has_write_permission(Node *node){ return node != NULL && (node->permissions & 2) != 0; }
+bool has_execute_permission(Node *node){ return node != NULL && (node->permissions & 1) != 0; }
+bool is_file(Node *node){ return node != NULL && node->type == NODE_FILE; }
+bool is_directory(Node *node){ return node != NULL && node->type == NODE_DIRECTORY; }
 
-/* zisti, ci ma uzol pravo na zapis */
-static int has_write_permission(const Node *node) {
-    return (node->permissions & 2) != 0;
-}
-
-/* zisti, ci ma uzol pravo na spustenie alebo vstup */
-static int has_execute_permission(const Node *node) {
-    return (node->permissions & 1) != 0;
-}
-
-/* prevedie ciselne prava na textovy tvar rwx */
-static void permissions_to_text(int permissions, char text[4]) {
-    text[0] = (permissions & 4) != 0 ? 'r' : '-';
-    text[1] = (permissions & 2) != 0 ? 'w' : '-';
-    text[2] = (permissions & 1) != 0 ? 'x' : '-';
+void permissions_to_text(int permissions, char text[4]){
+    text[0] = (permissions & 4) ? 'r' : '-';
+    text[1] = (permissions & 2) ? 'w' : '-';
+    text[2] = (permissions & 1) ? 'x' : '-';
     text[3] = '\0';
 }
 
-/* skontroluje, ci je nazov polozky platny */
-static int is_valid_name(const char *name) {
+void print_node_info(Node *node){
+    char permissions_text[4];
+
+    permissions_to_text(node->permissions, permissions_text);
+    printf("%s %s %s\n", node->name, node->owner, permissions_text);
+}
+
+void print_directory_listing(Node *directory){
+    Node *current = directory->children;
+
+    if (current == NULL) {
+        printf("ziaden subor\n");
+        return;
+    }
+
+    while (current != NULL) {
+        print_node_info(current);
+        current = current->next;
+    }
+}
+
+bool is_valid_name(const char *name){
     if (name == NULL || name[0] == '\0') {
-        return 0;
+        return false;
     }
 
     if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
-        return 0;
+        return false;
     }
 
     return strchr(name, '/') == NULL;
 }
 
-/* najde priameho potomka v adresari podla nazvu */
-static Node *find_child(Node *directory, const char *name) {
-    Node *current = directory->children;
+Node *find_child(Node *directory, const char *name){
+    Node *current;
 
+    if (!is_directory(directory)) {
+        return NULL;
+    }
+
+    current = directory->children;
     while (current != NULL) {
         if (strcmp(current->name, name) == 0) {
             return current;
@@ -135,17 +236,15 @@ static Node *find_child(Node *directory, const char *name) {
     return NULL;
 }
 
-/* prida potomka do adresara */
-static void add_child(Node *parent, Node *child) {
+void add_child(Node *parent, Node *child){
     child->parent = parent;
     child->next = parent->children;
     parent->children = child;
 }
 
-/* odpoji potomka od rodica bez uvolnenia pamate */
-static void detach_child(Node *child) {
-    Node *parent;
+void detach_child(Node *child){
     Node *current;
+    Node *parent;
 
     if (child == NULL || child->parent == NULL) {
         return;
@@ -173,70 +272,7 @@ static void detach_child(Node *child) {
     child->next = NULL;
 }
 
-/* porovnanie uzlov pre triedenie podla nazvu */
-static int compare_nodes_by_name(const void *left, const void *right) {
-    const Node *left_node = *(const Node * const *)left;
-    const Node *right_node = *(const Node * const *)right;
-    return strcmp(left_node->name, right_node->name);
-}
-
-/* spocita pocet poloziek v adresari */
-static int count_children(const Node *directory) {
-    int count = 0;
-    const Node *current = directory->children;
-
-    while (current != NULL) {
-        count++;
-        current = current->next;
-    }
-
-    return count;
-}
-
-/* vypise jednu polozku v tvare nazov vlastnik prava */
-static void print_node_info(const Node *node) {
-    char permissions_text[4];
-
-    permissions_to_text(node->permissions, permissions_text);
-    printf("%s %s %s\n", node->name, node->owner, permissions_text);
-}
-
-/* vypise obsah adresara v utriedenom poradi */
-static void print_directory_listing(const Node *directory) {
-    int child_count;
-    int index = 0;
-    Node **sorted_children;
-    Node *current;
-
-    child_count = count_children(directory);
-    if (child_count == 0) {
-        printf("ziaden subor\n");
-        return;
-    }
-
-    sorted_children = (Node **)malloc(sizeof(Node *) * (size_t)child_count);
-    if (sorted_children == NULL) {
-        fprintf(stderr, "chyba pamate\n");
-        exit(EXIT_FAILURE);
-    }
-
-    current = directory->children;
-    while (current != NULL) {
-        sorted_children[index++] = current;
-        current = current->next;
-    }
-
-    qsort(sorted_children, (size_t)child_count, sizeof(Node *), compare_nodes_by_name);
-
-    for (index = 0; index < child_count; index++) {
-        print_node_info(sorted_children[index]);
-    }
-
-    free(sorted_children);
-}
-
-/* vrati korenovy adresar stromu */
-static Node *get_root(Node *node) {
+Node *get_root(Node *node){
     while (node != NULL && node->parent != NULL) {
         node = node->parent;
     }
@@ -244,22 +280,148 @@ static Node *get_root(Node *node) {
     return node;
 }
 
-/* najde uzol podla relativnej alebo absolutnej cesty */
-static Node *resolve_path(Node *current_directory, const char *path) {
+char *skip_spaces(char *text){
+    while (*text != '\0' && isspace((unsigned char)*text)) {
+        text++;
+    }
+
+    return text;
+}
+
+void trim_line(char *text){
+    size_t length;
+
+    if (text == NULL) {
+        return;
+    }
+
+    length = strlen(text);
+    while (length > 0 && isspace((unsigned char)text[length - 1])) {
+        text[length - 1] = '\0';
+        length--;
+    }
+}
+
+char *read_token(char **cursor){
+    char *start;
+    char *end;
+
+    *cursor = skip_spaces(*cursor);
+    if (**cursor == '\0') {
+        return NULL;
+    }
+
+    start = *cursor;
+    end = start;
+
+    while (*end != '\0' && !isspace((unsigned char)*end)) {
+        end++;
+    }
+
+    if (*end != '\0') {
+        *end = '\0';
+        end++;
+    }
+
+    *cursor = end;
+    return start;
+}
+
+bool has_extra_arguments(char *cursor){ return read_token(&cursor) != NULL; }
+
+bool parse_no_arguments(char *cursor){
+    if (has_extra_arguments(cursor)) {
+        print_error();
+        return false;
+    }
+
+    return true;
+}
+
+bool parse_one_argument(char *cursor, char **arg){
+    *arg = read_token(&cursor);
+
+    if (*arg == NULL || has_extra_arguments(cursor)) {
+        print_error();
+        return false;
+    }
+
+    return true;
+}
+
+bool parse_optional_argument(char *cursor, char **arg){
+    *arg = read_token(&cursor);
+
+    if (has_extra_arguments(cursor)) {
+        print_error();
+        return false;
+    }
+
+    return true;
+}
+
+bool parse_two_arguments(char *cursor, char **first, char **second){
+    *first = read_token(&cursor);
+    *second = read_token(&cursor);
+
+    if (*first == NULL || *second == NULL || has_extra_arguments(cursor)) {
+        print_error();
+        return false;
+    }
+
+    return true;
+}
+
+bool parse_zapis_arguments(char *cursor, char **path, char **content){
+    *path = read_token(&cursor);
+    if (*path == NULL) {
+        print_error();
+        return false;
+    }
+
+    *content = skip_spaces(cursor);
+    return true;
+}
+
+bool is_permission_text(const char *text){
+    if (text == NULL || text[0] == '\0' || text[1] != '\0') {
+        return false;
+    }
+
+    return text[0] >= '0' && text[0] <= '7';
+}
+
+int permission_value(const char *text){ return text[0] - '0'; }
+
+void remove_last_slashes(char *path){
+    size_t length;
+
+    if (path == NULL) {
+        return;
+    }
+
+    length = strlen(path);
+    while (length > 1 && path[length - 1] == '/') {
+        path[length - 1] = '\0';
+        length--;
+    }
+}
+
+Node *resolve_path_from(Node *start, const char *path){
     Node *current;
     char *path_copy;
     char *token;
 
     if (path == NULL || path[0] == '\0') {
-        return current_directory;
+        return start;
     }
 
     if (strcmp(path, "/") == 0) {
-        return get_root(current_directory);
+        return get_root(start);
     }
 
-    current = path[0] == '/' ? get_root(current_directory) : current_directory;
-    path_copy = duplicate_string(path);
+    current = (path[0] == '/') ? get_root(start) : start;
+    path_copy = copy_text(path);
 
     token = strtok(path_copy, "/");
     while (token != NULL) {
@@ -276,7 +438,7 @@ static Node *resolve_path(Node *current_directory, const char *path) {
             continue;
         }
 
-        if (current->type != NODE_DIRECTORY) {
+        if (!is_directory(current)) {
             free(path_copy);
             return NULL;
         }
@@ -294,117 +456,72 @@ static Node *resolve_path(Node *current_directory, const char *path) {
     return current;
 }
 
-/* z cesty ziska rodicovsky adresar a meno ciela */
-static Node *resolve_parent_directory(Node *current_directory, const char *path, char **name_part) {
-    Node *parent_directory;
+Node *resolve_path(const char *path){ return resolve_path_from(current_directory, path); }
+
+Node *resolve_parent_directory(const char *path, char **name_part){
+    Node *parent;
     char *path_copy;
-    char *last_separator;
+    char *last_slash;
 
     *name_part = NULL;
     if (path == NULL || path[0] == '\0') {
         return NULL;
     }
 
-    path_copy = duplicate_string(path);
+    path_copy = copy_text(path);
+    remove_last_slashes(path_copy);
 
-    while (strlen(path_copy) > 1 && path_copy[strlen(path_copy) - 1] == '/') {
-        path_copy[strlen(path_copy) - 1] = '\0';
-    }
-
-    last_separator = strrchr(path_copy, '/');
-    if (last_separator == NULL) {
-        parent_directory = current_directory;
-        *name_part = duplicate_string(path_copy);
+    last_slash = strrchr(path_copy, '/');
+    if (last_slash == NULL) {
+        parent = current_directory;
+        *name_part = copy_text(path_copy);
         free(path_copy);
-        return parent_directory;
+        return parent;
     }
 
-    if (last_separator == path_copy) {
-        parent_directory = get_root(current_directory);
-        *name_part = duplicate_string(last_separator + 1);
+    if (last_slash == path_copy) {
+        parent = get_root(current_directory);
+        *name_part = copy_text(last_slash + 1);
         free(path_copy);
-        return parent_directory;
+        return parent;
     }
 
-    *last_separator = '\0';
-    *name_part = duplicate_string(last_separator + 1);
-    parent_directory = resolve_path(current_directory, path_copy);
+    *last_slash = '\0';
+    *name_part = copy_text(last_slash + 1);
+    parent = resolve_path(path_copy);
     free(path_copy);
-    return parent_directory;
+
+    return parent;
 }
 
-/* prepise obsah suboru alebo adresara novym textom */
-static void replace_content(Node *node, const char *new_content) {
+Node *get_create_parent(const char *path, char **name_part){
+    Node *parent = resolve_parent_directory(path, name_part);
+    if (!is_directory(parent) || !is_valid_name(*name_part)) return NULL;
+    return parent;
+}
+
+void swap_args(char **first, char **second){
+    char *temp = *first;
+    *first = *second;
+    *second = temp;
+}
+
+void replace_content(Node *node, const char *new_content){
     free(node->content);
-    node->content = duplicate_string(new_content);
+    node->content = copy_text(new_content == NULL ? "" : new_content);
 }
 
-/* preskoci uvodne medzery a tabulatory */
-static char *skip_spaces(char *text) {
-    while (*text != '\0' && isspace((unsigned char)*text)) {
-        text++;
-    }
-
-    return text;
+void change_owner(Node *node, const char *owner){
+    free(node->owner);
+    node->owner = copy_text(owner);
 }
 
-/* odstrani koncove biele znaky zo vstupneho riadku */
-static void trim_trailing_spaces(char *text) {
-    size_t length;
-
-    if (text == NULL) {
-        return;
-    }
-
-    length = strlen(text);
-    while (length > 0 && isspace((unsigned char)text[length - 1])) {
-        text[length - 1] = '\0';
-        length--;
-    }
-}
-
-/* nacita dalsi argument oddeleny bielymi znakmi */
-static char *read_next_token(char **cursor) {
-    char *start;
-    char *end;
-
-    *cursor = skip_spaces(*cursor);
-    if (**cursor == '\0') {
-        return NULL;
-    }
-
-    start = *cursor;
-    end = start;
-    while (*end != '\0' && !isspace((unsigned char)*end)) {
-        end++;
-    }
-
-    if (*end != '\0') {
-        *end = '\0';
-        end++;
-    }
-
-    *cursor = end;
-    return start;
-}
-
-/* vypise chybu pri nedostatocnych pravach */
-static void print_permission_error(void) {
-    printf("chyba prav\n");
-}
-
-/* vypise vseobecnu chybu */
-static void print_generic_error(void) {
-    printf("chyba\n");
-}
-
-/* spracuje prikaz ls */
-static void handle_ls(Node *current_directory, const char *argument) {
+void command_ls(char *arg){
     Node *target;
 
-    if (argument == NULL) {
-        if (!has_read_permission(current_directory)) {
-            print_permission_error();
+    if (arg == NULL) {
+        if (!is_directory(current_directory) || !has_read_permission(current_directory)) {
+            print_error();
             return;
         }
 
@@ -412,142 +529,82 @@ static void handle_ls(Node *current_directory, const char *argument) {
         return;
     }
 
-    target = resolve_path(current_directory, argument);
+    target = resolve_path(arg);
     if (target == NULL) {
-        print_generic_error();
+        print_error();
         return;
     }
 
     print_node_info(target);
 }
 
-/* spracuje prikaz touch */
-static void handle_touch(Node *current_directory, const char *path) {
-    Node *parent_directory;
+void command_touch(char *path){
+    Node *parent;
     Node *existing;
     Node *new_file;
-    char *name_part;
+    char *name_part = NULL;
 
-    if (path == NULL) {
-        print_generic_error();
-        return;
-    }
-
-    parent_directory = resolve_parent_directory(current_directory, path, &name_part);
-    if (parent_directory == NULL || name_part == NULL || !is_valid_name(name_part)) {
+    parent = get_create_parent(path, &name_part);
+    if (parent == NULL || !has_write_permission(parent)) {
         free(name_part);
-        print_generic_error();
+        print_error();
         return;
     }
 
-    if (parent_directory->type != NODE_DIRECTORY) {
-        free(name_part);
-        print_generic_error();
-        return;
-    }
-
-    if (!has_write_permission(parent_directory)) {
-        free(name_part);
-        print_permission_error();
-        return;
-    }
-
-    existing = find_child(parent_directory, name_part);
+    existing = find_child(parent, name_part);
     if (existing != NULL) {
         free(name_part);
-        print_generic_error();
+        print_error();
         return;
     }
 
     new_file = create_node(name_part, NODE_FILE, DEFAULT_OWNER, 7);
-    add_child(parent_directory, new_file);
+    add_child(parent, new_file);
     free(name_part);
 }
 
-/* spracuje prikaz mkdir */
-static void handle_mkdir(Node *current_directory, const char *path) {
-    Node *parent_directory;
+void command_mkdir(char *path){
+    Node *parent;
     Node *existing;
     Node *new_directory;
-    char *name_part;
+    char *name_part = NULL;
 
-    if (path == NULL) {
-        print_generic_error();
-        return;
-    }
-
-    parent_directory = resolve_parent_directory(current_directory, path, &name_part);
-    if (parent_directory == NULL || name_part == NULL || !is_valid_name(name_part)) {
+    parent = get_create_parent(path, &name_part);
+    if (parent == NULL || !has_write_permission(parent)) {
         free(name_part);
-        print_generic_error();
+        print_error();
         return;
     }
 
-    if (parent_directory->type != NODE_DIRECTORY) {
-        free(name_part);
-        print_generic_error();
-        return;
-    }
-
-    if (!has_write_permission(parent_directory)) {
-        free(name_part);
-        print_permission_error();
-        return;
-    }
-
-    existing = find_child(parent_directory, name_part);
+    existing = find_child(parent, name_part);
     if (existing != NULL) {
         free(name_part);
-        print_generic_error();
+        print_error();
         return;
     }
 
     new_directory = create_node(name_part, NODE_DIRECTORY, DEFAULT_OWNER, 7);
-    add_child(parent_directory, new_directory);
+    add_child(parent, new_directory);
     free(name_part);
 }
 
-/* spracuje prikaz rm */
-static void handle_rm(Node *current_directory, const char *path) {
-    Node *target;
+void command_rm(char *path){
+    Node *target = resolve_path(path);
 
-    if (path == NULL) {
-        print_generic_error();
-        return;
-    }
-
-    target = resolve_path(current_directory, path);
-    if (target == NULL || target->parent == NULL) {
-        print_generic_error();
-        return;
-    }
-
-    if (!has_write_permission(target->parent)) {
-        print_permission_error();
+    if (target == NULL || target->parent == NULL || !has_write_permission(target->parent)) {
+        print_error();
         return;
     }
 
     detach_child(target);
-    free_node(target);
+    free_tree(target);
 }
 
-/* spracuje prikaz vypis */
-static void handle_vypis(Node *current_directory, const char *path) {
-    Node *target;
+void command_vypis(char *path){
+    Node *target = resolve_path(path);
 
-    if (path == NULL) {
-        print_generic_error();
-        return;
-    }
-
-    target = resolve_path(current_directory, path);
-    if (target == NULL || target->type != NODE_FILE) {
-        print_generic_error();
-        return;
-    }
-
-    if (!has_read_permission(target)) {
-        print_permission_error();
+    if (!is_file(target) || !has_read_permission(target)) {
+        print_error();
         return;
     }
 
@@ -559,221 +616,123 @@ static void handle_vypis(Node *current_directory, const char *path) {
     printf("%s\n", target->content);
 }
 
-/* spracuje prikaz spusti */
-static void handle_spusti(Node *current_directory, const char *path) {
+void command_spusti(char *path){
+    Node *target = resolve_path(path);
+
+    if (!is_file(target) || !has_execute_permission(target)) {
+        print_error();
+    }
+}
+
+void command_cd(char *path){
+    Node *target = resolve_path(path);
+
+    if (!is_directory(target) || !has_execute_permission(target)) {
+        print_error();
+        return;
+    }
+
+    current_directory = target;
+}
+
+void command_zapis(char *path, char *content){
+    Node *target = resolve_path(path);
+
+    if (target == NULL || !has_write_permission(target)) {
+        print_error();
+        return;
+    }
+
+    replace_content(target, content);
+}
+
+void command_chmod(char *first, char *second){
     Node *target;
 
-    if (path == NULL) {
-        print_generic_error();
-        return;
-    }
-
-    target = resolve_path(current_directory, path);
-    if (target == NULL || target->type != NODE_FILE) {
-        print_generic_error();
-        return;
-    }
-
-    if (!has_execute_permission(target)) {
-        print_permission_error();
-        return;
-    }
-
-    printf("ok\n");
-}
-
-/* spracuje prikaz cd */
-static void handle_cd(Node **current_directory, const char *path) {
-    Node *target;
-
-    if (path == NULL) {
-        print_generic_error();
-        return;
-    }
-
-    target = resolve_path(*current_directory, path);
-    if (target == NULL || target->type != NODE_DIRECTORY) {
-        print_generic_error();
-        return;
-    }
-
-    if (!has_execute_permission(target)) {
-        print_permission_error();
-        return;
-    }
-
-    *current_directory = target;
-}
-
-/* spracuje prikaz zapis */
-static void handle_zapis(Node *current_directory, const char *path, const char *content) {
-    Node *target;
-
-    if (path == NULL) {
-        print_generic_error();
-        return;
-    }
-
-    target = resolve_path(current_directory, path);
-    if (target == NULL) {
-        print_generic_error();
-        return;
-    }
-
-    if (!has_write_permission(target)) {
-        print_permission_error();
-        return;
-    }
-
-    replace_content(target, content == NULL ? "" : content);
-    printf("ok\n");
-}
-
-/* spracuje prikaz chmod */
-static void handle_chmod(Node *current_directory, const char *permissions_text, const char *path) {
-    Node *target;
-    long permissions_value;
-    char *end_pointer;
-
-    if (permissions_text == NULL || path == NULL) {
-        print_generic_error();
-        return;
-    }
-
-    permissions_value = strtol(permissions_text, &end_pointer, 10);
-    if (*end_pointer != '\0' || permissions_value < 0 || permissions_value > 7) {
-        print_generic_error();
-        return;
-    }
-
-    target = resolve_path(current_directory, path);
-    if (target == NULL) {
-        print_generic_error();
-        return;
-    }
-
-    target->permissions = (int)permissions_value;
-}
-
-/* spracuje prikaz chown */
-static void handle_chown(Node *current_directory, const char *owner, const char *path) {
-    Node *target;
-
-    if (owner == NULL || path == NULL || owner[0] == '\0') {
-        print_generic_error();
-        return;
-    }
-
-    target = resolve_path(current_directory, path);
-    if (target == NULL) {
-        print_generic_error();
-        return;
-    }
-
-    free(target->owner);
-    target->owner = duplicate_string(owner);
-}
-
-/* rozpozna prikaz zo vstupu a zavola prislusnu obsluhu */
-static int process_command(Node **current_directory, char *line) {
-    char *cursor = line;
-    char *command;
-    char *first_argument;
-    char *second_argument;
-    char *remaining_text;
-
-    trim_trailing_spaces(line);
-    cursor = skip_spaces(cursor);
-    if (*cursor == '\0') {
-        return 1;
-    }
-
-    command = read_next_token(&cursor);
-
-    if (strcmp(command, "quit") == 0) {
-        return 0;
-    }
-
-    if (strcmp(command, "ls") == 0) {
-        first_argument = read_next_token(&cursor);
-        handle_ls(*current_directory, first_argument);
-        return 1;
-    }
-
-    if (strcmp(command, "touch") == 0) {
-        first_argument = read_next_token(&cursor);
-        handle_touch(*current_directory, first_argument);
-        return 1;
-    }
-
-    if (strcmp(command, "mkdir") == 0) {
-        first_argument = read_next_token(&cursor);
-        handle_mkdir(*current_directory, first_argument);
-        return 1;
-    }
-
-    if (strcmp(command, "rm") == 0) {
-        first_argument = read_next_token(&cursor);
-        handle_rm(*current_directory, first_argument);
-        return 1;
-    }
-
-    if (strcmp(command, "vypis") == 0) {
-        first_argument = read_next_token(&cursor);
-        handle_vypis(*current_directory, first_argument);
-        return 1;
-    }
-
-    if (strcmp(command, "spusti") == 0) {
-        first_argument = read_next_token(&cursor);
-        handle_spusti(*current_directory, first_argument);
-        return 1;
-    }
-
-    if (strcmp(command, "cd") == 0) {
-        first_argument = read_next_token(&cursor);
-        handle_cd(current_directory, first_argument);
-        return 1;
-    }
-
-    if (strcmp(command, "zapis") == 0) {
-        first_argument = read_next_token(&cursor);
-        remaining_text = skip_spaces(cursor);
-        handle_zapis(*current_directory, first_argument, remaining_text);
-        return 1;
-    }
-
-    if (strcmp(command, "chmod") == 0) {
-        first_argument = read_next_token(&cursor);
-        second_argument = read_next_token(&cursor);
-        handle_chmod(*current_directory, first_argument, second_argument);
-        return 1;
-    }
-
-    if (strcmp(command, "chown") == 0) {
-        first_argument = read_next_token(&cursor);
-        second_argument = read_next_token(&cursor);
-        handle_chown(*current_directory, first_argument, second_argument);
-        return 1;
-    }
-
-    print_generic_error();
-    return 1;
-}
-
-/* nacitava prikazy az do ukoncenia programu */
-int main(void) {
-    Node *root = create_node("/", NODE_DIRECTORY, DEFAULT_OWNER, 7);
-    Node *current_directory = root;
-    char line[MAX_LINE_LENGTH];
-
-    /* hlavny cyklus prikazoveho riadku */
-    while (fgets(line, sizeof(line), stdin) != NULL) {
-        if (!process_command(&current_directory, line)) {
-            break;
+    if (!is_permission_text(first)) {
+        if (is_permission_text(second)) {
+            swap_args(&first, &second);
+        } else {
+            print_error();
+            return;
         }
     }
 
-    free_node(root);
-    return 0;
+    target = resolve_path(second);
+    if (target == NULL) {
+        print_error();
+        return;
+    }
+
+    target->permissions = permission_value(first);
+}
+
+void command_chown(char *first, char *second){
+    Node *target;
+    Node *first_node = resolve_path(first);
+    Node *second_node = resolve_path(second);
+
+    if (first_node != NULL && second_node == NULL) {
+        swap_args(&first, &second);
+    }
+
+    target = resolve_path(second);
+
+    if (first == NULL || first[0] == '\0' || target == NULL) {
+        print_error();
+        return;
+    }
+
+    change_owner(target, first);
+}
+
+bool execute_simple_command(char *command, char *cursor){
+    char *first = NULL;
+    char *second = NULL;
+
+    if (strcmp(command, "ls") == 0) { if (!parse_optional_argument(cursor, &first)) return true; command_ls(first); return true; }
+    if (strcmp(command, "touch") == 0) { if (!parse_one_argument(cursor, &first)) return true; command_touch(first); return true; }
+    if (strcmp(command, "mkdir") == 0) { if (!parse_one_argument(cursor, &first)) return true; command_mkdir(first); return true; }
+    if (strcmp(command, "rm") == 0) { if (!parse_one_argument(cursor, &first)) return true; command_rm(first); return true; }
+    if (strcmp(command, "vypis") == 0) { if (!parse_one_argument(cursor, &first)) return true; command_vypis(first); return true; }
+    if (strcmp(command, "spusti") == 0) { if (!parse_one_argument(cursor, &first)) return true; command_spusti(first); return true; }
+    if (strcmp(command, "cd") == 0) { if (!parse_one_argument(cursor, &first)) return true; command_cd(first); return true; }
+    if (strcmp(command, "chmod") == 0) { if (!parse_two_arguments(cursor, &first, &second)) return true; command_chmod(first, second); return true; }
+    if (strcmp(command, "chown") == 0) { if (!parse_two_arguments(cursor, &first, &second)) return true; command_chown(first, second); return true; }
+
+    print_error();
+    return true;
+}
+
+bool process_command(char *line){
+    char *cursor;
+    char *command;
+    char *path = NULL;
+    char *content = NULL;
+
+    trim_line(line);
+    cursor = skip_spaces(line);
+
+    if (*cursor == '\0') {
+        return true;
+    }
+
+    command = read_token(&cursor);
+
+    if (strcmp(command, "quit") == 0) {
+        if (!parse_no_arguments(cursor)) {
+            return true;
+        }
+        return false;
+    }
+
+    if (strcmp(command, "zapis") == 0) {
+        if (!parse_zapis_arguments(cursor, &path, &content)) {
+            return true;
+        }
+        command_zapis(path, content);
+        return true;
+    }
+
+    return execute_simple_command(command, cursor);
 }
