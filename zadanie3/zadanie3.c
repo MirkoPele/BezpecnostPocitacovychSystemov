@@ -5,7 +5,7 @@
 #include <stdbool.h>
 
 #define MAX_LINE_LENGTH 2048
-#define DEFAULT_OWNER "balaz"
+#define DEFAULT_USER "balaz"
 
 typedef enum {
     NODE_FILE,
@@ -85,10 +85,12 @@ void command_cd(char *path);
 void command_zapis(char *path, char *content);
 void command_chmod(char *first, char *second);
 void command_chown(char *first, char *second);
+void create_entry(char *path, NodeType type);
 
 bool execute_simple_command(char *command, char *cursor);
 bool process_command(char *line);
 
+// cita prikazy zo vstupu a postupne ich vykonava
 int main(void){
     char line[MAX_LINE_LENGTH];
 
@@ -105,20 +107,26 @@ int main(void){
 }
 
 
+// pripravi pociatocny stav virtualneho suboroveho systemu
 void init_system(){
-    root_directory = create_node("/", NODE_DIRECTORY, DEFAULT_OWNER, 7);
+    root_directory = create_node("/", NODE_DIRECTORY, DEFAULT_USER, 7);
     current_directory = root_directory;
 }
 
+// uvolni cely strom a vynuluje globalne premenne
 void clean_up(){
     free_tree(root_directory);
     root_directory = NULL;
     current_directory = NULL;
 }
 
+// ukonci program pri chybe s pamatou
 void memory_error(){ fprintf(stderr, "chyba pamate\n"); exit(EXIT_FAILURE); }
+
+// vypise jednotny chybovy vystup
 void print_error(){ printf("chyba\n"); }
 
+// vytvori kopiu textu v novom bloku pamate
 char *copy_text(const char *text){
     char *copy;
     size_t length;
@@ -134,6 +142,7 @@ char *copy_text(const char *text){
     return copy;
 }
 
+// vytvori novy uzol reprezentujuci subor alebo adresar
 Node *create_node(const char *name, NodeType type, const char *owner, int permissions){
     Node *node = (Node *)malloc(sizeof(Node));
 
@@ -151,6 +160,7 @@ Node *create_node(const char *name, NodeType type, const char *owner, int permis
     return node;
 }
 
+// rekurzivne uvolni cely podstrom od zadaneho uzla
 void free_tree(Node *node){
     Node *child;
     Node *next_child;
@@ -172,12 +182,22 @@ void free_tree(Node *node){
     free(node);
 }
 
+// zisti, ci sa da z uzla citat
 bool has_read_permission(Node *node){ return node != NULL && (node->permissions & 4) != 0; }
+
+// zisti, ci sa do uzla da zapisovat
 bool has_write_permission(Node *node){ return node != NULL && (node->permissions & 2) != 0; }
+
+// zisti, ci sa uzol da spustit alebo otvorit
 bool has_execute_permission(Node *node){ return node != NULL && (node->permissions & 1) != 0; }
+
+// overi, ci uzol predstavuje obycajny subor
 bool is_file(Node *node){ return node != NULL && node->type == NODE_FILE; }
+
+// overi, ci uzol predstavuje adresar
 bool is_directory(Node *node){ return node != NULL && node->type == NODE_DIRECTORY; }
 
+// prevedie ciselne prava do textovej podoby rwx
 void permissions_to_text(int permissions, char text[4]){
     text[0] = (permissions & 4) ? 'r' : '-';
     text[1] = (permissions & 2) ? 'w' : '-';
@@ -185,6 +205,7 @@ void permissions_to_text(int permissions, char text[4]){
     text[3] = '\0';
 }
 
+// vypise meno, vlastnika a prava jedneho uzla
 void print_node_info(Node *node){
     char permissions_text[4];
 
@@ -192,6 +213,7 @@ void print_node_info(Node *node){
     printf("%s %s %s\n", node->name, node->owner, permissions_text);
 }
 
+// vypise obsah adresara alebo oznam o prazdnom adresari
 void print_directory_listing(Node *directory){
     Node *current = directory->children;
 
@@ -206,6 +228,7 @@ void print_directory_listing(Node *directory){
     }
 }
 
+// skontroluje, ci nazov uzla neobsahuje nepovolene hodnoty
 bool is_valid_name(const char *name){
     if (name == NULL || name[0] == '\0') {
         return false;
@@ -218,6 +241,7 @@ bool is_valid_name(const char *name){
     return strchr(name, '/') == NULL;
 }
 
+// najde priameho potomka s danym menom
 Node *find_child(Node *directory, const char *name){
     Node *current;
 
@@ -236,12 +260,14 @@ Node *find_child(Node *directory, const char *name){
     return NULL;
 }
 
+// vlozi novy uzol medzi deti daneho rodica
 void add_child(Node *parent, Node *child){
     child->parent = parent;
     child->next = parent->children;
     parent->children = child;
 }
 
+// odpoji uzol od jeho rodica bez uvolnenia pamate
 void detach_child(Node *child){
     Node *current;
     Node *parent;
@@ -272,6 +298,7 @@ void detach_child(Node *child){
     child->next = NULL;
 }
 
+// vrati korenovy adresar pre dany uzol
 Node *get_root(Node *node){
     while (node != NULL && node->parent != NULL) {
         node = node->parent;
@@ -280,6 +307,7 @@ Node *get_root(Node *node){
     return node;
 }
 
+// preskoci uvodne medzery v texte
 char *skip_spaces(char *text){
     while (*text != '\0' && isspace((unsigned char)*text)) {
         text++;
@@ -288,6 +316,7 @@ char *skip_spaces(char *text){
     return text;
 }
 
+// odstrani medzery a konce riadkov z pravej strany
 void trim_line(char *text){
     size_t length;
 
@@ -302,6 +331,7 @@ void trim_line(char *text){
     }
 }
 
+// precita dalsi argument oddeleny medzerou
 char *read_token(char **cursor){
     char *start;
     char *end;
@@ -327,8 +357,10 @@ char *read_token(char **cursor){
     return start;
 }
 
+// zisti, ci po spracovani este ostali dalsie argumenty
 bool has_extra_arguments(char *cursor){ return read_token(&cursor) != NULL; }
 
+// overi prikaz bez argumentov
 bool parse_no_arguments(char *cursor){
     if (has_extra_arguments(cursor)) {
         print_error();
@@ -338,6 +370,7 @@ bool parse_no_arguments(char *cursor){
     return true;
 }
 
+// overi prikaz s presne jednym argumentom
 bool parse_one_argument(char *cursor, char **arg){
     *arg = read_token(&cursor);
 
@@ -349,6 +382,7 @@ bool parse_one_argument(char *cursor, char **arg){
     return true;
 }
 
+// overi prikaz s volitelnym argumentom
 bool parse_optional_argument(char *cursor, char **arg){
     *arg = read_token(&cursor);
 
@@ -360,6 +394,7 @@ bool parse_optional_argument(char *cursor, char **arg){
     return true;
 }
 
+// overi prikaz s dvoma argumentmi
 bool parse_two_arguments(char *cursor, char **first, char **second){
     *first = read_token(&cursor);
     *second = read_token(&cursor);
@@ -372,6 +407,7 @@ bool parse_two_arguments(char *cursor, char **first, char **second){
     return true;
 }
 
+// oddeli cestu a zvysok riadku pre prikaz zapis
 bool parse_zapis_arguments(char *cursor, char **path, char **content){
     *path = read_token(&cursor);
     if (*path == NULL) {
@@ -383,6 +419,7 @@ bool parse_zapis_arguments(char *cursor, char **path, char **content){
     return true;
 }
 
+// skontroluje, ci retazec predstavuje jedno cislo prav
 bool is_permission_text(const char *text){
     if (text == NULL || text[0] == '\0' || text[1] != '\0') {
         return false;
@@ -391,8 +428,10 @@ bool is_permission_text(const char *text){
     return text[0] >= '0' && text[0] <= '7';
 }
 
+// premeni textovu podobu prav na cislo
 int permission_value(const char *text){ return text[0] - '0'; }
 
+// odstrani nadbytocne lomky na konci cesty
 void remove_last_slashes(char *path){
     size_t length;
 
@@ -407,6 +446,7 @@ void remove_last_slashes(char *path){
     }
 }
 
+// prejde cestu od zadaneho uzla a vrati cielovy uzol
 Node *resolve_path_from(Node *start, const char *path){
     Node *current;
     char *path_copy;
@@ -420,16 +460,19 @@ Node *resolve_path_from(Node *start, const char *path){
         return get_root(start);
     }
 
+    // absolutna cesta sa riesi od rootu, inak od aktualneho miesta
     current = (path[0] == '/') ? get_root(start) : start;
     path_copy = copy_text(path);
 
     token = strtok(path_copy, "/");
     while (token != NULL) {
+        // bodka znamena ostat v tom istom adresari
         if (strcmp(token, ".") == 0) {
             token = strtok(NULL, "/");
             continue;
         }
 
+        // dve bodky posunu o uroven vyssie ak sa da
         if (strcmp(token, "..") == 0) {
             if (current->parent != NULL) {
                 current = current->parent;
@@ -456,8 +499,10 @@ Node *resolve_path_from(Node *start, const char *path){
     return current;
 }
 
+// prelozi cestu od aktualneho adresara
 Node *resolve_path(const char *path){ return resolve_path_from(current_directory, path); }
 
+// vrati rodicovsky adresar a oddeli nazov poslednej casti
 Node *resolve_parent_directory(const char *path, char **name_part){
     Node *parent;
     char *path_copy;
@@ -471,6 +516,7 @@ Node *resolve_parent_directory(const char *path, char **name_part){
     path_copy = copy_text(path);
     remove_last_slashes(path_copy);
 
+    // posledna cast bude nazov a vsetko pred nou rodic
     last_slash = strrchr(path_copy, '/');
     if (last_slash == NULL) {
         parent = current_directory;
@@ -494,28 +540,62 @@ Node *resolve_parent_directory(const char *path, char **name_part){
     return parent;
 }
 
+// pripravi rodica pre vytvorenie noveho uzla
 Node *get_create_parent(const char *path, char **name_part){
     Node *parent = resolve_parent_directory(path, name_part);
-    if (!is_directory(parent) || !is_valid_name(*name_part)) return NULL;
+    if (!is_directory(parent) || !is_valid_name(*name_part)) {
+        return NULL;
+    }
+
     return parent;
 }
 
+// prehodi poradie dvoch argumentov
 void swap_args(char **first, char **second){
     char *temp = *first;
     *first = *second;
     *second = temp;
 }
 
+// nahradi obsah suboru novym textom
 void replace_content(Node *node, const char *new_content){
     free(node->content);
     node->content = copy_text(new_content == NULL ? "" : new_content);
 }
 
+// zmeni vlastnika vybraneho uzla
 void change_owner(Node *node, const char *owner){
     free(node->owner);
     node->owner = copy_text(owner);
 }
 
+// vytvori subor alebo adresar podla zadaneho typu
+void create_entry(char *path, NodeType type){
+    Node *parent;
+    Node *existing;
+    Node *new_node;
+    char *name_part = NULL;
+
+    parent = get_create_parent(path, &name_part);
+    if (parent == NULL || !has_write_permission(parent)) {
+        free(name_part);
+        print_error();
+        return;
+    }
+
+    existing = find_child(parent, name_part);
+    if (existing != NULL) {
+        free(name_part);
+        print_error();
+        return;
+    }
+
+    new_node = create_node(name_part, type, DEFAULT_USER, 7);
+    add_child(parent, new_node);
+    free(name_part);
+}
+
+// spracuje prikaz na vypis informacii o uzle
 void command_ls(char *arg){
     Node *target;
 
@@ -538,56 +618,17 @@ void command_ls(char *arg){
     print_node_info(target);
 }
 
+// vytvori novy subor v zadanej ceste
 void command_touch(char *path){
-    Node *parent;
-    Node *existing;
-    Node *new_file;
-    char *name_part = NULL;
-
-    parent = get_create_parent(path, &name_part);
-    if (parent == NULL || !has_write_permission(parent)) {
-        free(name_part);
-        print_error();
-        return;
-    }
-
-    existing = find_child(parent, name_part);
-    if (existing != NULL) {
-        free(name_part);
-        print_error();
-        return;
-    }
-
-    new_file = create_node(name_part, NODE_FILE, DEFAULT_OWNER, 7);
-    add_child(parent, new_file);
-    free(name_part);
+    create_entry(path, NODE_FILE);
 }
 
+// vytvori novy adresar v zadanej ceste
 void command_mkdir(char *path){
-    Node *parent;
-    Node *existing;
-    Node *new_directory;
-    char *name_part = NULL;
-
-    parent = get_create_parent(path, &name_part);
-    if (parent == NULL || !has_write_permission(parent)) {
-        free(name_part);
-        print_error();
-        return;
-    }
-
-    existing = find_child(parent, name_part);
-    if (existing != NULL) {
-        free(name_part);
-        print_error();
-        return;
-    }
-
-    new_directory = create_node(name_part, NODE_DIRECTORY, DEFAULT_OWNER, 7);
-    add_child(parent, new_directory);
-    free(name_part);
+    create_entry(path, NODE_DIRECTORY);
 }
 
+// odstrani uzol aj s jeho podstromom
 void command_rm(char *path){
     Node *target = resolve_path(path);
 
@@ -600,6 +641,7 @@ void command_rm(char *path){
     free_tree(target);
 }
 
+// vypise obsah suboru alebo ok pri prazdnom obsahu
 void command_vypis(char *path){
     Node *target = resolve_path(path);
 
@@ -616,6 +658,7 @@ void command_vypis(char *path){
     printf("%s\n", target->content);
 }
 
+// overi, ci sa dany subor da spustit
 void command_spusti(char *path){
     Node *target = resolve_path(path);
 
@@ -624,6 +667,7 @@ void command_spusti(char *path){
     }
 }
 
+// zmeni aktualny adresar
 void command_cd(char *path){
     Node *target = resolve_path(path);
 
@@ -635,6 +679,7 @@ void command_cd(char *path){
     current_directory = target;
 }
 
+// zapise novy obsah do suboru
 void command_zapis(char *path, char *content){
     Node *target = resolve_path(path);
 
@@ -646,6 +691,7 @@ void command_zapis(char *path, char *content){
     replace_content(target, content);
 }
 
+// zmeni pristupove prava uzla
 void command_chmod(char *first, char *second){
     Node *target;
 
@@ -667,11 +713,13 @@ void command_chmod(char *first, char *second){
     target->permissions = permission_value(first);
 }
 
+// zmeni vlastnika uzla
 void command_chown(char *first, char *second){
     Node *target;
     Node *first_node = resolve_path(first);
     Node *second_node = resolve_path(second);
 
+    // ak prvy argument vyzera ako cesta a druhy nie, prehodime ich
     if (first_node != NULL && second_node == NULL) {
         swap_args(&first, &second);
     }
@@ -686,24 +734,64 @@ void command_chown(char *first, char *second){
     change_owner(target, first);
 }
 
+// vykona bezne prikazy okrem zapis a quit
 bool execute_simple_command(char *command, char *cursor){
     char *first = NULL;
     char *second = NULL;
 
-    if (strcmp(command, "ls") == 0) { if (!parse_optional_argument(cursor, &first)) return true; command_ls(first); return true; }
-    if (strcmp(command, "touch") == 0) { if (!parse_one_argument(cursor, &first)) return true; command_touch(first); return true; }
-    if (strcmp(command, "mkdir") == 0) { if (!parse_one_argument(cursor, &first)) return true; command_mkdir(first); return true; }
-    if (strcmp(command, "rm") == 0) { if (!parse_one_argument(cursor, &first)) return true; command_rm(first); return true; }
-    if (strcmp(command, "vypis") == 0) { if (!parse_one_argument(cursor, &first)) return true; command_vypis(first); return true; }
-    if (strcmp(command, "spusti") == 0) { if (!parse_one_argument(cursor, &first)) return true; command_spusti(first); return true; }
-    if (strcmp(command, "cd") == 0) { if (!parse_one_argument(cursor, &first)) return true; command_cd(first); return true; }
-    if (strcmp(command, "chmod") == 0) { if (!parse_two_arguments(cursor, &first, &second)) return true; command_chmod(first, second); return true; }
-    if (strcmp(command, "chown") == 0) { if (!parse_two_arguments(cursor, &first, &second)) return true; command_chown(first, second); return true; }
+    if (strcmp(command, "ls") == 0) {
+        if (!parse_optional_argument(cursor, &first)) {
+            return true;
+        }
+        command_ls(first);
+    } else if (strcmp(command, "touch") == 0) {
+        if (!parse_one_argument(cursor, &first)) {
+            return true;
+        }
+        command_touch(first);
+    } else if (strcmp(command, "mkdir") == 0) {
+        if (!parse_one_argument(cursor, &first)) {
+            return true;
+        }
+        command_mkdir(first);
+    } else if (strcmp(command, "rm") == 0) {
+        if (!parse_one_argument(cursor, &first)) {
+            return true;
+        }
+        command_rm(first);
+    } else if (strcmp(command, "vypis") == 0) {
+        if (!parse_one_argument(cursor, &first)) {
+            return true;
+        }
+        command_vypis(first);
+    } else if (strcmp(command, "spusti") == 0) {
+        if (!parse_one_argument(cursor, &first)) {
+            return true;
+        }
+        command_spusti(first);
+    } else if (strcmp(command, "cd") == 0) {
+        if (!parse_one_argument(cursor, &first)) {
+            return true;
+        }
+        command_cd(first);
+    } else if (strcmp(command, "chmod") == 0) {
+        if (!parse_two_arguments(cursor, &first, &second)) {
+            return true;
+        }
+        command_chmod(first, second);
+    } else if (strcmp(command, "chown") == 0) {
+        if (!parse_two_arguments(cursor, &first, &second)) {
+            return true;
+        }
+        command_chown(first, second);
+    } else {
+        print_error();
+    }
 
-    print_error();
     return true;
 }
 
+// nacita jeden riadok a rozhodne, ako sa ma spracovat
 bool process_command(char *line){
     char *cursor;
     char *command;
@@ -719,6 +807,7 @@ bool process_command(char *line){
 
     command = read_token(&cursor);
 
+    // quit ukonci citanie prikazov
     if (strcmp(command, "quit") == 0) {
         if (!parse_no_arguments(cursor)) {
             return true;
@@ -726,6 +815,7 @@ bool process_command(char *line){
         return false;
     }
 
+    // zapis berie ako obsah cely zvysok riadku
     if (strcmp(command, "zapis") == 0) {
         if (!parse_zapis_arguments(cursor, &path, &content)) {
             return true;
